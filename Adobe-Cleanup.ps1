@@ -187,10 +187,10 @@ function Get-AdobeInstalls {
 
 function Invoke-Silent {
     # Start a process, wait up to $TimeoutSec, kill if it hangs
-    param([string]$File, [string]$Args, [int]$TimeoutSec = 900)
-    $p = Start-Process -FilePath $File -ArgumentList $Args -PassThru -WindowStyle Hidden -ErrorAction Stop
+    param([string]$File, [string]$ArgString, [int]$TimeoutSec = 900)
+    $p = Start-Process -FilePath $File -ArgumentList $ArgString -PassThru -WindowStyle Hidden -ErrorAction Stop
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
-        Log "Timed out: $File $Args - killing" 'WARN'
+        Log "Timed out: $File $ArgString - killing" 'WARN'
         & taskkill.exe /F /T /PID $p.Id 2>&1 | Out-Null
         return -1
     }
@@ -207,7 +207,7 @@ function Uninstall-AdobeProducts {
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($ccUninst) {
         Act "Run Creative Cloud Uninstaller" {
-            $rc = Invoke-Silent -File $ccUninst -Args '-u' -TimeoutSec 600
+            $rc = Invoke-Silent -File $ccUninst -ArgString '-u' -TimeoutSec 600
             Log "Creative Cloud Uninstaller exit code: $rc"
         }
         Stop-AdobeProcesses
@@ -225,19 +225,19 @@ function Uninstall-AdobeProducts {
         Act "Uninstall $($app.Name) $($app.Version)" {
             $rc = $null
             if ($app.IsMsi -and $app.KeyName -match '^\{[0-9A-Fa-f-]{36}\}$') {
-                $rc = Invoke-Silent -File 'msiexec.exe' -Args "/x $($app.KeyName) /qn /norestart REBOOT=ReallySuppress"
+                $rc = Invoke-Silent -File 'msiexec.exe' -ArgString "/x $($app.KeyName) /qn /norestart REBOOT=ReallySuppress"
             }
             elseif ($app.QuietUninst) {
-                $rc = Invoke-Silent -File 'cmd.exe' -Args "/c `"$($app.QuietUninst)`""
+                $rc = Invoke-Silent -File 'cmd.exe' -ArgString "/c `"$($app.QuietUninst)`""
             }
             elseif ($app.Uninstall) {
                 $u = $app.Uninstall
                 if ($u -match 'msiexec' -and $u -match '(\{[0-9A-Fa-f-]{36}\})') {
-                    $rc = Invoke-Silent -File 'msiexec.exe' -Args "/x $($Matches[1]) /qn /norestart REBOOT=ReallySuppress"
+                    $rc = Invoke-Silent -File 'msiexec.exe' -ArgString "/x $($Matches[1]) /qn /norestart REBOOT=ReallySuppress"
                 }
                 else {
                     # Adobe's own Setup.exe-style uninstallers and InstallShield/NSIS-style ones
-                    $rc = Invoke-Silent -File 'cmd.exe' -Args "/c `"$u`" /S /silent /quiet /norestart" -TimeoutSec 600
+                    $rc = Invoke-Silent -File 'cmd.exe' -ArgString "/c `"$u`" /S /silent /quiet /norestart" -TimeoutSec 600
                 }
             }
             Log "$($app.Name): exit code $rc" ($(if ($rc -in 0,3010,1641) {'OK'} else {'WARN'}))
