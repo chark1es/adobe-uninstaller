@@ -412,9 +412,66 @@ function Remove-AdobeRegistry {
 # ----------------------------------------------------------------------------
 $script:NeedReboot = $false
 
+# ----------------------------------------------------------------------------
+# Sign out: kill every Adobe session and wipe local login + license state.
+# This signs the machine out LOCALLY. It cannot tell Adobe's servers to free the
+# seat - see the reminder printed at the end.
+# ----------------------------------------------------------------------------
+function Invoke-AdobeSignOut {
+    Log '--- Signing out of Adobe (local sessions, tokens, license cache) ---'
+    Stop-AdobeProcesses   # ends the running Creative Cloud / app sessions for ALL users
+
+    $profiles = Get-ChildItem 'C:\Users' -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notin 'Public','Default','Default User','All Users' }
+
+    # Per-user sign-in / identity / license state
+    foreach ($u in $profiles) {
+        $up = $u.FullName
+        @(
+            "$up\AppData\Local\Adobe\OOBE",               # sign-in + entitlement database (opm.db)
+            "$up\AppData\Roaming\Adobe\OOBE",
+            "$up\AppData\Local\Adobe\Creative Cloud",     # CC desktop app session
+            "$up\AppData\Roaming\Adobe\Creative Cloud",
+            "$up\AppData\Roaming\Adobe\CoreSync",         # sync + cached account data
+            "$up\AppData\Local\Adobe\CoreSync",
+            "$up\AppData\Local\Adobe\AdobeGCClient",
+            "$up\AppData\Roaming\Adobe\CRLog"
+        ) | ForEach-Object { Remove-PathForce $_ }
+    }
+
+    # Machine-wide license caches
+    @(
+        "$env:ProgramData\Adobe\SLStore",
+        "$env:ProgramData\Adobe\SLCache",
+        "$env:ProgramData\Adobe\OOBE",
+        "$env:ProgramData\Adobe\AdobeGCClient",
+        "${env:ProgramFiles(x86)}\Common Files\Adobe\SLCache",
+        "${env:ProgramFiles(x86)}\Common Files\Adobe\SLStore",
+        "${env:ProgramFiles(x86)}\Common Files\Adobe\OOBE",
+        "${env:ProgramFiles(x86)}\Common Files\Adobe\AdobeGCClient",
+        "$env:ProgramFiles\Common Files\Adobe\SLCache",
+        "$env:ProgramFiles\Common Files\Adobe\SLStore"
+    ) | ForEach-Object { Remove-PathForce $_ }
+
+    # Saved Adobe logins in Windows Credential Manager (current/elevated user's vault)
+    $creds = & cmdkey.exe /list 2>$null | ForEach-Object {
+        if ($_ -match 'Target:\s*(.+?)\s*$') { $Matches[1] }
+    } | Where-Object { $_ -match 'adobe|acrobat|creative ?cloud|ims-na1' }
+    foreach ($c in $creds) {
+        $target = $c -replace '^[A-Za-z]+:target=', ''
+        Act "Delete saved credential '$target'" {
+            & cmdkey.exe /delete:"$target" 2>&1 | Out-Null
+            Log "Deleted saved credential '$target'" 'OK'
+        }
+    }
+
+    Log 'Local Adobe sign-out complete.' 'OK'
+}
+
 Stop-AdobeProcesses
 Stop-AdobeServices
 Remove-AdobeScheduledTasks
+Invoke-AdobeSignOut
 Uninstall-AdobeProducts
 Stop-AdobeProcesses        # uninstallers sometimes relaunch helpers
 Stop-AdobeServices
@@ -430,6 +487,14 @@ else             { Log 'No Adobe products remain registered.' 'OK' }
 
 Log "Done. Log saved to $LogFile"
 if ($script:NeedReboot) { Log 'Some files were locked - reboot and run the script again to finish.' 'WARN' }
+
+Write-Host ''
+Write-Host '=== LICENSE REMINDER ===' -ForegroundColor Yellow
+Write-Host 'This script signed the machine out LOCALLY only. It cannot free the license on Adobe''s servers.' -ForegroundColor Yellow
+Write-Host '  Individual plan : account.adobe.com > Plans > manage devices / "Sign out everywhere", or remove this device.' -ForegroundColor Yellow
+Write-Host '  Team/Enterprise : Admin Console (adminconsole.adobe.com) > Users > unassign or reassign the product.' -ForegroundColor Yellow
+Write-Host '  Shared Device / serialized licenses: deactivate via your licensing package or Adobe support.' -ForegroundColor Yellow
+Write-Host ''
 
 if ($Reboot -and -not $DryRun) {
     Log 'Rebooting in 30 seconds...' 'WARN'
